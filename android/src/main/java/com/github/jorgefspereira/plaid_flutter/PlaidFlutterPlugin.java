@@ -5,10 +5,15 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.Window;
 
 import androidx.annotation.NonNull;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentActivity;
+import androidx.fragment.app.FragmentManager;
 
 import java.util.Map;
 import java.util.HashMap;
@@ -40,8 +45,7 @@ import com.plaid.link.result.LinkSuccessMetadata;
 import com.plaid.link.result.LinkResultHandler;
 
 /** PlaidFlutterPlugin */
-public class PlaidFlutterPlugin
-    implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware, ActivityResultListener {
+public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware, ActivityResultListener {
 
   private static final String METHOD_CHANNEL_NAME = "plugins.flutter.io/plaid_flutter";
   private static final String EVENT_CHANNEL_NAME = "plugins.flutter.io/plaid_flutter/events";
@@ -72,6 +76,9 @@ public class PlaidFlutterPlugin
   private PlaidHandler plaidHandler;
 
   private boolean darkStatusIcons = false;
+  private int savedSystemUiFlags = -1;
+  private int savedStatusBarColor = -1;
+  private FragmentManager.FragmentLifecycleCallbacks plaidFragmentCallback = null;
 
   /// Result handler
   private final LinkResultHandler resultHandler = new LinkResultHandler(
@@ -93,13 +100,14 @@ public class PlaidFlutterPlugin
 
         LinkError error = linkExit.getError();
 
-        if (error != null) {
+        if(error != null) {
           data.put(KEY_ERROR, mapFromError(error));
         }
 
         sendEvent(data);
         return Unit.INSTANCE;
-      });
+      }
+  );
 
   /// FlutterPlugin
 
@@ -114,7 +122,8 @@ public class PlaidFlutterPlugin
     // Register the embedded view factory
     binding.getPlatformViewRegistry().registerViewFactory(
         "plaid/embedded-view",
-        new PLKEmbeddedView(binding.getBinaryMessenger(), this));
+        new PLKEmbeddedView(binding.getBinaryMessenger(), this)
+    );
   }
 
   @Override
@@ -130,23 +139,23 @@ public class PlaidFlutterPlugin
 
   @Override
   public void onMethodCall(MethodCall call, @NonNull Result result) {
-    switch (call.method) {
-      case "create":
-        this.create(call.arguments(), result);
-        break;
-      case "open":
-        this.open(result);
-        break;
-      case "close":
-        this.close(result);
-        break;
-      case "submit":
-        this.submit(call.arguments(), result);
-        break;
-      default:
-        result.notImplemented();
-        break;
-    }
+      switch (call.method) {
+          case "create":
+              this.create(call.arguments(), result);
+              break;
+          case "open":
+              this.open(result);
+              break;
+          case "close":
+              this.close(result);
+              break;
+          case "submit":
+              this.submit(call.arguments(), result);
+              break;
+          default:
+              result.notImplemented();
+              break;
+      }
   }
 
   /// ActivityAware
@@ -177,25 +186,7 @@ public class PlaidFlutterPlugin
 
   @Override
   public boolean onActivityResult(int requestCode, int resultCode, Intent intent) {
-    boolean handled = resultHandler.onActivityResult(requestCode, resultCode, intent);
-
-    // Restore the system UI flags that Plaid may have overwritten
-    if (handled && binding != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      Activity activity = binding.getActivity();
-      if (activity != null) {
-        Window window = activity.getWindow();
-        if (savedSystemUiFlags != -1) {
-          window.getDecorView().setSystemUiVisibility(savedSystemUiFlags);
-          savedSystemUiFlags = -1;
-        }
-        if (savedStatusBarColor != -1) {
-          window.setStatusBarColor(savedStatusBarColor);
-          savedStatusBarColor = -1;
-        }
-      }
-    }
-
-    return handled;
+    return resultHandler.onActivityResult(requestCode, resultCode, intent);
   }
 
   /// EventChannel.StreamHandler
@@ -247,8 +238,8 @@ public class PlaidFlutterPlugin
 
     LinkTokenConfiguration config = getLinkTokenConfiguration(arguments);
 
-    if (config != null) {
-      plaidHandler = Plaid.create((Application) context.getApplicationContext(), config);
+    if(config != null) {
+      plaidHandler = Plaid.create((Application)context.getApplicationContext(),config);
     }
 
     reply.success(null);
@@ -260,59 +251,76 @@ public class PlaidFlutterPlugin
       Window window = activity.getWindow();
       View decorView = window.getDecorView();
 
-      // Snapshot the flags Flutter set BEFORE Plaid touches anything
-      final int flagsToRestore;
-      final int colorToRestore;
+      // Snapshot current flags BEFORE Plaid touches anything
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        flagsToRestore = decorView.getSystemUiVisibility();
-        colorToRestore = window.getStatusBarColor();
-      } else {
-        flagsToRestore = -1;
-        colorToRestore = -1;
+        savedSystemUiFlags = decorView.getSystemUiVisibility();
+        savedStatusBarColor = window.getStatusBarColor();
       }
 
-      // Set up Plaid's required window state
-      window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-      window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
-      window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+      // Register a FragmentLifecycleCallbacks to detect when Plaid's
+      // bottom sheet fragment is removed — that's our restore signal.
+      if (activity instanceof FragmentActivity) {
+        FragmentManager fm = ((FragmentActivity) activity).getSupportFragmentManager();
 
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        int flags = decorView.getSystemUiVisibility();
-        if (this.darkStatusIcons) {
-          flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-        } else {
-          flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        // Remove any stale callback first
+        if (plaidFragmentCallback != null) {
+          fm.unregisterFragmentLifecycleCallbacks(plaidFragmentCallback);
         }
-        decorView.setSystemUiVisibility(flags);
+
+        plaidFragmentCallback = new FragmentManager.FragmentLifecycleCallbacks() {
+          private boolean plaidFragmentSeen = false;
+
+          @Override
+          public void onFragmentAttached(@NonNull FragmentManager fm, @NonNull Fragment f, @NonNull Context ctx) {
+            // Mark that we've seen Plaid's fragment appear
+            if (f.getClass().getName().contains("plaid") || f.getClass().getName().contains("Plaid")
+                || f.getTag() != null && f.getTag().contains("plaid")) {
+              plaidFragmentSeen = true;
+            }
+          }
+
+          @Override
+          public void onFragmentDetached(@NonNull FragmentManager fm, @NonNull Fragment f) {
+            if (plaidFragmentSeen) {
+              plaidFragmentSeen = false;
+              fm.unregisterFragmentLifecycleCallbacks(this);
+              plaidFragmentCallback = null;
+              // Post restore to end of main thread queue so Plaid fully finishes first
+              new Handler(Looper.getMainLooper()).post(() -> restoreSystemUi(window, decorView));
+            }
+          }
+        };
+
+        fm.registerFragmentLifecycleCallbacks(plaidFragmentCallback, true);
       }
 
-      // Plaid is a bottom sheet — it never starts a new Activity, so onActivityResult
-      // never fires. The decor view loses window focus when the sheet opens and
-      // REGAINS
-      // it when the sheet fully dismisses. That is our restore signal.
-      decorView.getViewTreeObserver()
-          .addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener() {
-            @Override
-            public void onWindowFocusChanged(boolean hasFocus) {
-              if (hasFocus) {
-                // Sheet dismissed — remove listener immediately so it does not fire again
-                decorView.getViewTreeObserver().removeOnWindowFocusChangeListener(this);
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                  // Post to end of message queue so Flutter's own UI restoration
-                  // (which also runs on resume) does not overwrite us
-                  decorView.post(() -> {
-                    decorView.setSystemUiVisibility(flagsToRestore);
-                    window.setStatusBarColor(colorToRestore);
-                  });
-                }
-              }
-            }
-          });
+      // Also register a window focus listener as a fallback for non-Fragment flows
+      decorView.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener() {
+        @Override
+        public void onWindowFocusChanged(boolean hasFocus) {
+          if (hasFocus) {
+            decorView.getViewTreeObserver().removeOnWindowFocusChangeListener(this);
+            new Handler(Looper.getMainLooper()).post(() -> restoreSystemUi(window, decorView));
+          }
+        }
+      });
 
       plaidHandler.open(activity);
     }
     reply.success(null);
+  }
+
+  private void restoreSystemUi(Window window, View decorView) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      if (savedSystemUiFlags != -1) {
+        decorView.setSystemUiVisibility(savedSystemUiFlags);
+        savedSystemUiFlags = -1;
+      }
+      if (savedStatusBarColor != -1) {
+        window.setStatusBarColor(savedStatusBarColor);
+        savedStatusBarColor = -1;
+      }
+    }
   }
 
   private void close(Result reply) {
@@ -372,7 +380,7 @@ public class PlaidFlutterPlugin
   public Map<String, String> mapFromError(LinkError error) {
     Map<String, String> result = new HashMap<>();
 
-    result.put("errorType", ""); // TODO:
+    result.put("errorType", ""); //TODO:
     result.put("errorCode", error.getErrorCode().getJson());
     result.put("errorMessage", error.getErrorMessage());
     result.put("errorDisplayMessage", error.getDisplayMessage());
@@ -418,7 +426,7 @@ public class PlaidFlutterPlugin
 
     ArrayList<Object> accounts = new ArrayList<>();
 
-    for (LinkAccount a : data.getAccounts()) {
+    for (LinkAccount a: data.getAccounts()) {
       Map<String, String> aux = new HashMap<>();
       aux.put("id", a.getId());
       aux.put("mask", a.getMask());
