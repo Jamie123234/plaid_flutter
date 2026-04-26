@@ -11,6 +11,8 @@ class LinkTokenConfiguration {
   /// A Boolean value that determines whether Link displays a transparent gradient background.
   final bool showGradientBackground;
 
+  final bool darkStatusIcons;
+
   /// The LinkTokenConfiguration only needs a token which is created by your app's
   /// server and passed to your app's client to initialize Link. The Link configuration parameters that were
   /// previously set within Link itself are now set via parameters passed to /link/token/create and conveyed
@@ -23,6 +25,7 @@ class LinkTokenConfiguration {
     this.noLoadingState = false,
     this.showGradientBackground = false,
     this.receivedRedirectUri,
+    this.darkStatusIcons = false,
   });
 
   /// Returns a representation of this object as a JSON object.
@@ -32,16 +35,25 @@ class LinkTokenConfiguration {
       'noLoadingState': noLoadingState,
       'receivedRedirectUri': receivedRedirectUri,
       'showGradientBackground': showGradientBackground,
+      'darkStatusIcons': darkStatusIcons,
     };
   }
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is LinkTokenConfiguration && runtimeType == other.runtimeType && hashCode == other.hashCode;
+      identical(this, other) ||
+      other is LinkTokenConfiguration &&
+          runtimeType == other.runtimeType &&
+          token == other.token &&
+          noLoadingState == other.noLoadingState &&
+          darkStatusIcons == other.darkStatusIcons;
 
   @override
-  int get hashCode =>
-      Object.hash(token.hashCode, noLoadingState.hashCode, receivedRedirectUri.hashCode, showGradientBackground.hashCode);
+  int get hashCode => Object.hash(
+    token.hashCode,
+    noLoadingState.hashCode,
+    darkStatusIcons.hashCode,
+  );
 }
 
 /// Data to submit during a Link session.
@@ -52,10 +64,7 @@ class SubmissionData {
   /// The end user's date of birth. To be provided in the format "yyyy-mm-dd".
   String? dateOfBirth;
 
-  SubmissionData({
-    this.phoneNumber,
-    this.dateOfBirth,
-  });
+  SubmissionData({this.phoneNumber, this.dateOfBirth});
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{

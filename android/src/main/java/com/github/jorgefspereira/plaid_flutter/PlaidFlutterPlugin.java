@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
+import android.view.View;
+import android.view.Window;
 
 import androidx.annotation.NonNull;
 
@@ -66,6 +69,8 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   private EventChannel eventChannel;
   private EventSink eventSink;
   private PlaidHandler plaidHandler;
+
+  private boolean darkStatusIcons = false;
 
   /// Result handler
   private final LinkResultHandler resultHandler = new LinkResultHandler(
@@ -216,6 +221,10 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
       return Unit.INSTANCE;
     });
 
+    if (arguments.containsKey("darkStatusIcons")) {
+      this.darkStatusIcons = (boolean) arguments.get("darkStatusIcons");
+    }
+
     LinkTokenConfiguration config = getLinkTokenConfiguration(arguments);
 
     if(config != null) {
@@ -226,11 +235,26 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   }
 
   private void open(Result reply) {
-    if (plaidHandler != null) {
-      plaidHandler.open(binding.getActivity());
-    }
+      if (plaidHandler != null && binding != null) {
+          Activity activity = binding.getActivity();
+          
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+              Window window = activity.getWindow();
+              View decorView = window.getDecorView();
+              int flags = decorView.getSystemUiVisibility();
 
-    reply.success(null);
+              if (this.darkStatusIcons) {
+                  flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; // Force Dark Icons
+              } else {
+                  flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; // Force Light Icons
+              }
+              
+              decorView.setSystemUiVisibility(flags);
+          }
+
+          plaidHandler.open(activity);
+      }
+      reply.success(null);
   }
 
   private void close(Result reply) {
