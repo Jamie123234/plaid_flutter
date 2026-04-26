@@ -5,6 +5,7 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
 
@@ -261,10 +262,11 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
     if (plaidHandler != null && binding != null) {
       Activity activity = binding.getActivity();
       Window window = activity.getWindow();
+      View decorView = window.getDecorView();
 
-      // Snapshot current state so we can restore it after Plaid closes
+      // Snapshot current state BEFORE Plaid changes anything
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        savedSystemUiFlags = window.getDecorView().getSystemUiVisibility();
+        savedSystemUiFlags = decorView.getSystemUiVisibility();
         savedStatusBarColor = window.getStatusBarColor();
       }
 
@@ -274,9 +276,7 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
       window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        View decorView = window.getDecorView();
         int flags = decorView.getSystemUiVisibility();
-
         if (this.darkStatusIcons) {
           flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         } else {
@@ -285,9 +285,52 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
         decorView.setSystemUiVisibility(flags);
       }
 
+      // Plaid opens as a bottom sheet inside the same Activity, so onActivityResult
+      // never fires. Instead, watch the Activity lifecycle: onResume fires when the
+      // sheet is fully dismissed and our Activity is interactive again.
+      Application app = (Application) context.getApplicationContext();
+      app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+        private boolean plaidOpened = false;
+
+        @Override public void onActivityCreated(@NonNull Activity a, Bundle b) {}
+        @Override public void onActivityStarted(@NonNull Activity a) {}
+        @Override public void onActivityStopped(@NonNull Activity a) {}
+        @Override public void onActivitySaveInstanceState(@NonNull Activity a, @NonNull Bundle b) {}
+        @Override public void onActivityDestroyed(@NonNull Activity a) {}
+
+        @Override
+        public void onActivityPaused(@NonNull Activity a) {
+          // Mark that our activity paused while Plaid was open
+          if (a == activity) plaidOpened = true;
+        }
+
+        @Override
+        public void onActivityResumed(@NonNull Activity a) {
+          // Our activity is coming back to the foreground after Plaid dismissed
+          if (a == activity && plaidOpened) {
+            plaidOpened = false;
+            app.unregisterActivityLifecycleCallbacks(this);
+            restoreSystemUi(window, decorView);
+          }
+        }
+      });
+
       plaidHandler.open(activity);
     }
     reply.success(null);
+  }
+
+  private void restoreSystemUi(Window window, View decorView) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      if (savedSystemUiFlags != -1) {
+        decorView.setSystemUiVisibility(savedSystemUiFlags);
+        savedSystemUiFlags = -1;
+      }
+      if (savedStatusBarColor != -1) {
+        window.setStatusBarColor(savedStatusBarColor);
+        savedStatusBarColor = -1;
+      }
+    }
   }
 
   private void close(Result reply) {
