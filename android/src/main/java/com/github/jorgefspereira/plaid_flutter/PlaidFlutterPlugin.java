@@ -5,7 +5,6 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
-import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
 
@@ -41,7 +40,8 @@ import com.plaid.link.result.LinkSuccessMetadata;
 import com.plaid.link.result.LinkResultHandler;
 
 /** PlaidFlutterPlugin */
-public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware, ActivityResultListener {
+public class PlaidFlutterPlugin
+    implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware, ActivityResultListener {
 
   private static final String METHOD_CHANNEL_NAME = "plugins.flutter.io/plaid_flutter";
   private static final String EVENT_CHANNEL_NAME = "plugins.flutter.io/plaid_flutter/events";
@@ -72,8 +72,6 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   private PlaidHandler plaidHandler;
 
   private boolean darkStatusIcons = false;
-  private int savedSystemUiFlags = -1;
-  private int savedStatusBarColor = -1;
 
   /// Result handler
   private final LinkResultHandler resultHandler = new LinkResultHandler(
@@ -95,14 +93,13 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
 
         LinkError error = linkExit.getError();
 
-        if(error != null) {
+        if (error != null) {
           data.put(KEY_ERROR, mapFromError(error));
         }
 
         sendEvent(data);
         return Unit.INSTANCE;
-      }
-  );
+      });
 
   /// FlutterPlugin
 
@@ -117,8 +114,7 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
     // Register the embedded view factory
     binding.getPlatformViewRegistry().registerViewFactory(
         "plaid/embedded-view",
-        new PLKEmbeddedView(binding.getBinaryMessenger(), this)
-    );
+        new PLKEmbeddedView(binding.getBinaryMessenger(), this));
   }
 
   @Override
@@ -134,23 +130,23 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
 
   @Override
   public void onMethodCall(MethodCall call, @NonNull Result result) {
-      switch (call.method) {
-          case "create":
-              this.create(call.arguments(), result);
-              break;
-          case "open":
-              this.open(result);
-              break;
-          case "close":
-              this.close(result);
-              break;
-          case "submit":
-              this.submit(call.arguments(), result);
-              break;
-          default:
-              result.notImplemented();
-              break;
-      }
+    switch (call.method) {
+      case "create":
+        this.create(call.arguments(), result);
+        break;
+      case "open":
+        this.open(result);
+        break;
+      case "close":
+        this.close(result);
+        break;
+      case "submit":
+        this.submit(call.arguments(), result);
+        break;
+      default:
+        result.notImplemented();
+        break;
+    }
   }
 
   /// ActivityAware
@@ -251,8 +247,8 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
 
     LinkTokenConfiguration config = getLinkTokenConfiguration(arguments);
 
-    if(config != null) {
-      plaidHandler = Plaid.create((Application)context.getApplicationContext(),config);
+    if (config != null) {
+      plaidHandler = Plaid.create((Application) context.getApplicationContext(), config);
     }
 
     reply.success(null);
@@ -264,13 +260,18 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
       Window window = activity.getWindow();
       View decorView = window.getDecorView();
 
-      // Snapshot current state BEFORE Plaid changes anything
+      // Snapshot the flags Flutter set BEFORE Plaid touches anything
+      final int flagsToRestore;
+      final int colorToRestore;
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        savedSystemUiFlags = decorView.getSystemUiVisibility();
-        savedStatusBarColor = window.getStatusBarColor();
+        flagsToRestore = decorView.getSystemUiVisibility();
+        colorToRestore = window.getStatusBarColor();
+      } else {
+        flagsToRestore = -1;
+        colorToRestore = -1;
       }
 
-      // Ensure the window is allowed to draw system bar backgrounds
+      // Set up Plaid's required window state
       window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
       window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
       window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
@@ -285,52 +286,33 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
         decorView.setSystemUiVisibility(flags);
       }
 
-      // Plaid opens as a bottom sheet inside the same Activity, so onActivityResult
-      // never fires. Instead, watch the Activity lifecycle: onResume fires when the
-      // sheet is fully dismissed and our Activity is interactive again.
-      Application app = (Application) context.getApplicationContext();
-      app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-        private boolean plaidOpened = false;
+      // Plaid is a bottom sheet — it never starts a new Activity, so onActivityResult
+      // never fires. The decor view loses window focus when the sheet opens and
+      // REGAINS
+      // it when the sheet fully dismisses. That is our restore signal.
+      decorView.getViewTreeObserver()
+          .addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener() {
+            @Override
+            public void onWindowFocusChanged(boolean hasFocus) {
+              if (hasFocus) {
+                // Sheet dismissed — remove listener immediately so it does not fire again
+                decorView.getViewTreeObserver().removeOnWindowFocusChangeListener(this);
 
-        @Override public void onActivityCreated(@NonNull Activity a, Bundle b) {}
-        @Override public void onActivityStarted(@NonNull Activity a) {}
-        @Override public void onActivityStopped(@NonNull Activity a) {}
-        @Override public void onActivitySaveInstanceState(@NonNull Activity a, @NonNull Bundle b) {}
-        @Override public void onActivityDestroyed(@NonNull Activity a) {}
-
-        @Override
-        public void onActivityPaused(@NonNull Activity a) {
-          // Mark that our activity paused while Plaid was open
-          if (a == activity) plaidOpened = true;
-        }
-
-        @Override
-        public void onActivityResumed(@NonNull Activity a) {
-          // Our activity is coming back to the foreground after Plaid dismissed
-          if (a == activity && plaidOpened) {
-            plaidOpened = false;
-            app.unregisterActivityLifecycleCallbacks(this);
-            restoreSystemUi(window, decorView);
-          }
-        }
-      });
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                  // Post to end of message queue so Flutter's own UI restoration
+                  // (which also runs on resume) does not overwrite us
+                  decorView.post(() -> {
+                    decorView.setSystemUiVisibility(flagsToRestore);
+                    window.setStatusBarColor(colorToRestore);
+                  });
+                }
+              }
+            }
+          });
 
       plaidHandler.open(activity);
     }
     reply.success(null);
-  }
-
-  private void restoreSystemUi(Window window, View decorView) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      if (savedSystemUiFlags != -1) {
-        decorView.setSystemUiVisibility(savedSystemUiFlags);
-        savedSystemUiFlags = -1;
-      }
-      if (savedStatusBarColor != -1) {
-        window.setStatusBarColor(savedStatusBarColor);
-        savedStatusBarColor = -1;
-      }
-    }
   }
 
   private void close(Result reply) {
@@ -390,7 +372,7 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   public Map<String, String> mapFromError(LinkError error) {
     Map<String, String> result = new HashMap<>();
 
-    result.put("errorType", ""); //TODO:
+    result.put("errorType", ""); // TODO:
     result.put("errorCode", error.getErrorCode().getJson());
     result.put("errorMessage", error.getErrorMessage());
     result.put("errorDisplayMessage", error.getDisplayMessage());
@@ -436,7 +418,7 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
 
     ArrayList<Object> accounts = new ArrayList<>();
 
-    for (LinkAccount a: data.getAccounts()) {
+    for (LinkAccount a : data.getAccounts()) {
       Map<String, String> aux = new HashMap<>();
       aux.put("id", a.getId());
       aux.put("mask", a.getMask());
