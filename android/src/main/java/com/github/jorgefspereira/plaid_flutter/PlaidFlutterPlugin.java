@@ -211,6 +211,13 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
       return;
     }
 
+    if (arguments.containsKey("darkStatusIcons")) {
+      Object val = arguments.get("darkStatusIcons");
+      if (val instanceof Boolean) {
+        this.darkStatusIcons = (Boolean) val;
+      }
+    }
+
     Plaid.setLinkEventListener(linkEvent -> {
       Map<String, Object> data = new HashMap<>();
       data.put(KEY_TYPE, EVENT_ON_EVENT);
@@ -235,26 +242,30 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   }
 
   private void open(Result reply) {
-      if (plaidHandler != null && binding != null) {
-          Activity activity = binding.getActivity();
-          
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-              Window window = activity.getWindow();
-              View decorView = window.getDecorView();
-              int flags = decorView.getSystemUiVisibility();
+    if (plaidHandler != null && binding != null) {
+      Activity activity = binding.getActivity();
+      Window window = activity.getWindow();
 
-              if (this.darkStatusIcons) {
-                  flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; // Force Dark Icons
-              } else {
-                  flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; // Force Light Icons
-              }
-              
-              decorView.setSystemUiVisibility(flags);
-          }
+      // Ensure the window is allowed to draw system bar backgrounds
+      window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+      window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+      window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
 
-          plaidHandler.open(activity);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        View decorView = window.getDecorView();
+        int flags = decorView.getSystemUiVisibility();
+
+        if (this.darkStatusIcons) {
+          flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        } else {
+          flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        }
+        decorView.setSystemUiVisibility(flags);
       }
-      reply.success(null);
+
+      plaidHandler.open(activity);
+    }
+    reply.success(null);
   }
 
   private void close(Result reply) {
