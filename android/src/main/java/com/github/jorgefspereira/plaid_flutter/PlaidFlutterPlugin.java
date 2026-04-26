@@ -228,10 +228,6 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
       return Unit.INSTANCE;
     });
 
-    if (arguments.containsKey("darkStatusIcons")) {
-      this.darkStatusIcons = (boolean) arguments.get("darkStatusIcons");
-    }
-
     LinkTokenConfiguration config = getLinkTokenConfiguration(arguments);
 
     if(config != null) {
