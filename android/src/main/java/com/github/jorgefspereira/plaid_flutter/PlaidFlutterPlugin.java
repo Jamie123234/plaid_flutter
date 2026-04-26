@@ -71,6 +71,8 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   private PlaidHandler plaidHandler;
 
   private boolean darkStatusIcons = false;
+  private int savedSystemUiFlags = -1;
+  private int savedStatusBarColor = -1;
 
   /// Result handler
   private final LinkResultHandler resultHandler = new LinkResultHandler(
@@ -178,7 +180,25 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
 
   @Override
   public boolean onActivityResult(int requestCode, int resultCode, Intent intent) {
-    return resultHandler.onActivityResult(requestCode, resultCode, intent);
+    boolean handled = resultHandler.onActivityResult(requestCode, resultCode, intent);
+
+    // Restore the system UI flags that Plaid may have overwritten
+    if (handled && binding != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      Activity activity = binding.getActivity();
+      if (activity != null) {
+        Window window = activity.getWindow();
+        if (savedSystemUiFlags != -1) {
+          window.getDecorView().setSystemUiVisibility(savedSystemUiFlags);
+          savedSystemUiFlags = -1;
+        }
+        if (savedStatusBarColor != -1) {
+          window.setStatusBarColor(savedStatusBarColor);
+          savedStatusBarColor = -1;
+        }
+      }
+    }
+
+    return handled;
   }
 
   /// EventChannel.StreamHandler
@@ -241,6 +261,12 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
     if (plaidHandler != null && binding != null) {
       Activity activity = binding.getActivity();
       Window window = activity.getWindow();
+
+      // Snapshot current state so we can restore it after Plaid closes
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        savedSystemUiFlags = window.getDecorView().getSystemUiVisibility();
+        savedStatusBarColor = window.getStatusBarColor();
+      }
 
       // Ensure the window is allowed to draw system bar backgrounds
       window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
@@ -404,4 +430,3 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   }
 
 }
-
