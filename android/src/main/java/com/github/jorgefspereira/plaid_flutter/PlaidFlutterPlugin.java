@@ -302,25 +302,49 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
               private void forceDarkIconsIfPlaid(Activity activity) {
                   String name = activity.getClass().getName().toLowerCase();
                   
-                  // Catch Plaid's LinkActivity
+                  // Catch Plaid's internal Activity
                   if (name.contains("plaid") || name.contains("linkactivity")) {
                       Window window = activity.getWindow();
+                      
+                      // 1. Force the status bar background to pure white 
+                      // (This prevents the translucent "white on white" ghosting)
+                      window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+                      window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+                      window.setStatusBarColor(android.graphics.Color.WHITE); 
+                      
                       View decorView = window.getDecorView();
                       
-                      // Add a persistent layout listener. 
-                      // This ensures that every time Plaid's UI updates or animates, 
-                      // we lock the dark icons back in.
-                      decorView.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                      // 2. Create a reusable command to force the icons black
+                      Runnable enforceDarkIcons = new Runnable() {
                           @Override
-                          public void onGlobalLayout() {
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                          public void run() {
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                  // Modern approach for Android 11+ (API 30+)
+                                  android.view.WindowInsetsController insetsController = window.getInsetsController();
+                                  if (insetsController != null) {
+                                      insetsController.setSystemBarsAppearance(
+                                          android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+                                          android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                                      );
+                                  }
+                              } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                  // Legacy approach for Android 6 to 10
                                   int flags = decorView.getSystemUiVisibility();
-                                  
-                                  // If Plaid stripped our dark icon flag, put it back
                                   if ((flags & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) == 0) {
                                       decorView.setSystemUiVisibility(flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
                                   }
                               }
+                          }
+                      };
+
+                      // 3. Run immediately
+                      enforceDarkIcons.run();
+
+                      // 4. Attach watchdog to run every time Plaid updates the UI
+                      decorView.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                          @Override
+                          public void onGlobalLayout() {
+                              enforceDarkIcons.run();
                           }
                       });
                   }
