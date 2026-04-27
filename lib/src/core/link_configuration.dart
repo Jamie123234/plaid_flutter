@@ -46,13 +46,17 @@ class LinkTokenConfiguration {
           runtimeType == other.runtimeType &&
           token == other.token &&
           noLoadingState == other.noLoadingState &&
-          darkStatusIcons == other.darkStatusIcons;
+          showGradientBackground == other.showGradientBackground &&
+          darkStatusIcons == other.darkStatusIcons &&
+          receivedRedirectUri == other.receivedRedirectUri;
 
   @override
   int get hashCode => Object.hash(
     token.hashCode,
     noLoadingState.hashCode,
+    showGradientBackground.hashCode,
     darkStatusIcons.hashCode,
+    receivedRedirectUri.hashCode,
   );
 }
 
