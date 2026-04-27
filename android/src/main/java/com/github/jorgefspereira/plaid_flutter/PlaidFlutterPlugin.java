@@ -300,17 +300,29 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
               }
 
               private void forceDarkIconsIfPlaid(Activity activity) {
-                  if (isPlaidActivity(activity)) {
+                  String name = activity.getClass().getName().toLowerCase();
+                  
+                  // Catch Plaid's LinkActivity
+                  if (name.contains("plaid") || name.contains("linkactivity")) {
                       Window window = activity.getWindow();
                       View decorView = window.getDecorView();
                       
-                      // Inject the dark status icon flag into Plaid's specific window
-                      int flags = decorView.getSystemUiVisibility();
-                      decorView.setSystemUiVisibility(flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-                      
-                      // Optional: If Plaid is giving the status bar a weird background color, 
-                      // you can force it to be transparent here so it matches your app:
-                      // window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                      // Add a persistent layout listener. 
+                      // This ensures that every time Plaid's UI updates or animates, 
+                      // we lock the dark icons back in.
+                      decorView.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                          @Override
+                          public void onGlobalLayout() {
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                  int flags = decorView.getSystemUiVisibility();
+                                  
+                                  // If Plaid stripped our dark icon flag, put it back
+                                  if ((flags & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) == 0) {
+                                      decorView.setSystemUiVisibility(flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                                  }
+                              }
+                          }
+                      });
                   }
               }
           };
