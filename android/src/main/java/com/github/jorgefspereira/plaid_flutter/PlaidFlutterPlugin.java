@@ -1,5 +1,5 @@
 package com.github.jorgefspereira.plaid_flutter;
-
+import android.os.Bundle;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
@@ -76,9 +76,6 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
   private PlaidHandler plaidHandler;
 
   private boolean darkStatusIcons = false;
-  private int savedSystemUiFlags = -1;
-  private int savedStatusBarColor = -1;
-  private FragmentManager.FragmentLifecycleCallbacks plaidFragmentCallback = null;
 
   /// Result handler
   private final LinkResultHandler resultHandler = new LinkResultHandler(
@@ -326,19 +323,6 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
     }
     
     reply.success(null);
-  }
-
-  private void restoreSystemUi(Window window, View decorView) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      if (savedSystemUiFlags != -1) {
-        decorView.setSystemUiVisibility(savedSystemUiFlags);
-        savedSystemUiFlags = -1;
-      }
-      if (savedStatusBarColor != -1) {
-        window.setStatusBarColor(savedStatusBarColor);
-        savedStatusBarColor = -1;
-      }
-    }
   }
 
   private void close(Result reply) {
