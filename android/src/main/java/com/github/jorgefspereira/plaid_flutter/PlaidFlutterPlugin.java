@@ -245,79 +245,86 @@ public class PlaidFlutterPlugin implements FlutterPlugin, MethodCallHandler, Eve
     reply.success(null);
   }
 
+  // Add this variable at the top of the class with your other variables if you wish, 
+  // or just put it right above the open() method.
+  private Application.ActivityLifecycleCallbacks plaidActivityCallback = null;
+
   private void open(Result reply) {
-      if (plaidHandler != null && binding != null) {
-        Activity activity = binding.getActivity();
-        Window window = activity.getWindow();
-        View decorView = window.getDecorView();
+    if (plaidHandler != null && binding != null) {
+      Activity currentActivity = binding.getActivity();
+      Application app = currentActivity.getApplication();
 
-        // Snapshot current flags BEFORE Plaid touches anything
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          savedSystemUiFlags = decorView.getSystemUiVisibility();
-          savedStatusBarColor = window.getStatusBarColor();
+      // If the user requested dark status icons, we intercept the Android lifecycle
+      // to catch Plaid's internal Activity when it launches.
+      if (darkStatusIcons && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
           
-          // FIX 1: Apply dark status icons immediately before Plaid opens
-          if (darkStatusIcons) {
-              decorView.setSystemUiVisibility(savedSystemUiFlags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-          }
-        }
-
-        // Register a FragmentLifecycleCallbacks to detect when Plaid's
-        // bottom sheet fragment is removed — that's our restore signal.
-        if (activity instanceof FragmentActivity) {
-          FragmentManager fm = ((FragmentActivity) activity).getSupportFragmentManager();
-
-          // Remove any stale callback first
-          if (plaidFragmentCallback != null) {
-            fm.unregisterFragmentLifecycleCallbacks(plaidFragmentCallback);
+          // Clean up any old callback to prevent memory leaks
+          if (plaidActivityCallback != null) {
+              app.unregisterActivityLifecycleCallbacks(plaidActivityCallback);
           }
 
-          plaidFragmentCallback = new FragmentManager.FragmentLifecycleCallbacks() {
-            private boolean plaidFragmentSeen = false;
-
-            @Override
-            public void onFragmentAttached(@NonNull FragmentManager fm, @NonNull Fragment f, @NonNull Context ctx) {
-              // Mark that we've seen Plaid's fragment appear
-              if (f.getClass().getName().contains("plaid") || f.getClass().getName().contains("Plaid")
-                  || f.getTag() != null && f.getTag().contains("plaid")) {
-                plaidFragmentSeen = true;
-                
-                // FIX 2: Enforce dark status icons after Plaid's fragment attaches, 
-                // in case the Plaid SDK tries to override it back to white.
-                if (darkStatusIcons && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    decorView.setSystemUiVisibility(decorView.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-                }
+          plaidActivityCallback = new Application.ActivityLifecycleCallbacks() {
+              @Override
+              public void onActivityCreated(@NonNull Activity activity, Bundle savedInstanceState) {
+                  forceDarkIconsIfPlaid(activity);
               }
-            }
 
-            @Override
-            public void onFragmentDetached(@NonNull FragmentManager fm, @NonNull Fragment f) {
-              if (plaidFragmentSeen) {
-                plaidFragmentSeen = false;
-                fm.unregisterFragmentLifecycleCallbacks(this);
-                plaidFragmentCallback = null;
-                // Post restore to end of main thread queue so Plaid fully finishes first
-                new Handler(Looper.getMainLooper()).post(() -> restoreSystemUi(window, decorView));
+              @Override
+              public void onActivityStarted(@NonNull Activity activity) {
+                  forceDarkIconsIfPlaid(activity);
               }
-            }
+
+              @Override
+              public void onActivityResumed(@NonNull Activity activity) {
+                  forceDarkIconsIfPlaid(activity);
+              }
+
+              @Override
+              public void onActivityPaused(@NonNull Activity activity) {}
+
+              @Override
+              public void onActivityStopped(@NonNull Activity activity) {}
+
+              @Override
+              public void onActivitySaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) {}
+
+              @Override
+              public void onActivityDestroyed(@NonNull Activity activity) {
+                  // Once the Plaid activity is destroyed, unregister this listener
+                  if (isPlaidActivity(activity)) {
+                      app.unregisterActivityLifecycleCallbacks(this);
+                      plaidActivityCallback = null;
+                  }
+              }
+
+              private boolean isPlaidActivity(Activity activity) {
+                  // Plaid's internal activities usually contain "plaid" in the package/class name
+                  return activity.getClass().getName().toLowerCase().contains("plaid");
+              }
+
+              private void forceDarkIconsIfPlaid(Activity activity) {
+                  if (isPlaidActivity(activity)) {
+                      Window window = activity.getWindow();
+                      View decorView = window.getDecorView();
+                      
+                      // Inject the dark status icon flag into Plaid's specific window
+                      int flags = decorView.getSystemUiVisibility();
+                      decorView.setSystemUiVisibility(flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                      
+                      // Optional: If Plaid is giving the status bar a weird background color, 
+                      // you can force it to be transparent here so it matches your app:
+                      // window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                  }
+              }
           };
+          
+          app.registerActivityLifecycleCallbacks(plaidActivityCallback);
+      }
 
-          fm.registerFragmentLifecycleCallbacks(plaidFragmentCallback, true);
-        }
-
-      // Also register a window focus listener as a fallback for non-Fragment flows
-      decorView.getViewTreeObserver().addOnWindowFocusChangeListener(new android.view.ViewTreeObserver.OnWindowFocusChangeListener() {
-        @Override
-        public void onWindowFocusChanged(boolean hasFocus) {
-          if (hasFocus) {
-            decorView.getViewTreeObserver().removeOnWindowFocusChangeListener(this);
-            new Handler(Looper.getMainLooper()).post(() -> restoreSystemUi(window, decorView));
-          }
-        }
-      });
-
-      plaidHandler.open(activity);
+      // Launch Plaid
+      plaidHandler.open(currentActivity);
     }
+    
     reply.success(null);
   }
 
